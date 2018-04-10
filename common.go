@@ -170,7 +170,7 @@ func isSAInClusterRoleBinding(crbObj *rbac.ClusterRoleBinding, sa, ns string) bo
 	return false
 }
 
-func setupClusterRoleBinding(k8sClient *kubernetes.Clientset, sa, ns, clusterRoleBinding, clusterRole string) error {
+func SetupClusterRoleBinding(k8sClient *kubernetes.Clientset, sa, ns, clusterRoleBinding, clusterRole string) error {
 	// get the cluster role binding object
 	crbObj, err := k8sClient.RbacV1beta1().ClusterRoleBindings().Get(
 		clusterRoleBinding, metav1.GetOptions{})
@@ -192,7 +192,7 @@ func setupClusterRoleBinding(k8sClient *kubernetes.Clientset, sa, ns, clusterRol
 	return err
 }
 
-func makeSAObj(sa, ns string) *apiv1.ServiceAccount {
+func MakeSAObj(sa, ns string) *apiv1.ServiceAccount {
 	return &apiv1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ns,
@@ -201,14 +201,14 @@ func makeSAObj(sa, ns string) *apiv1.ServiceAccount {
 	}
 }
 
-func setupSA(k8sClient *kubernetes.Clientset, sa, ns string) (*apiv1.ServiceAccount, error) {
+func SetupSA(k8sClient *kubernetes.Clientset, sa, ns string) (*apiv1.ServiceAccount, error) {
 	saObj, err := k8sClient.CoreV1Client.ServiceAccounts(ns).Get(sa, metav1.GetOptions{})
 	if err == nil {
 		return saObj, nil
 	}
 
 	if k8serrors.IsNotFound(err) {
-		saObj = makeSAObj(sa, ns)
+		saObj = MakeSAObj(sa, ns)
 		saObj, err = k8sClient.CoreV1Client.ServiceAccounts(ns).Create(saObj)
 	}
 
@@ -216,10 +216,126 @@ func setupSA(k8sClient *kubernetes.Clientset, sa, ns string) (*apiv1.ServiceAcco
 }
 
 func SetupRBAC(k8sClient *kubernetes.Clientset, sa, ns, clusterRoleBinding, clusterRole string) error {
-	_, err := setupSA(k8sClient, sa, ns)
+	_, err := SetupSA(k8sClient, sa, ns)
 	if err != nil {
 		return err
 	}
 
-	return setupClusterRoleBinding(k8sClient, sa, ns, clusterRoleBinding, clusterRole)
+	return SetupClusterRoleBinding(k8sClient, sa, ns, clusterRoleBinding, clusterRole)
+}
+
+// new functions
+// TODO : Cleanup and code re-org after testing
+func makeSecretAndConfigMapGetterClusterRoleObj(clusterRole string ) *rbac.ClusterRole {
+	return &rbac.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: clusterRole,
+		},
+		Rules: []rbac.PolicyRule{
+			{
+				APIGroups: []string{rbac.APIGroupAll},
+				Resources: []string{"secrets"},
+				Verbs: []string{"get", "watch", "list"},
+			},
+		},
+	}
+}
+
+func makePackageGetterClusterRoleObj(clusterRole string ) *rbac.ClusterRole {
+	return &rbac.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: clusterRole,
+		},
+		Rules: []rbac.PolicyRule{
+			{
+				APIGroups: []string{rbac.APIGroupAll},
+				Resources: []string{"packages"},
+				Verbs: []string{"get", "watch", "list"},
+			},
+		},
+	}
+}
+
+func SetupClusterRole(k8sClient *kubernetes.Clientset, clusterRole string) (error){
+	crObj, err := k8sClient.RbacV1beta1().ClusterRoles().Get(clusterRole, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+
+	if k8serrors.IsNotFound(err) {
+		if strings.Contains(clusterRole, "secret") {
+			crObj = makeSecretAndConfigMapGetterClusterRoleObj(clusterRole)
+		} else {
+			crObj = makePackageGetterClusterRoleObj(clusterRole)
+		}
+
+		crObj, err = k8sClient.RbacV1beta1Client.ClusterRoles().Create(crObj)
+	}
+
+	return err
+}
+
+func makeRoleBindingObj(ns, sa, roleBinding, roleBindingNs, clusterRole string) *rbac.RoleBinding {
+	return &rbac.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: roleBinding,
+			Namespace: roleBindingNs,
+		},
+		Subjects: []rbac.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      sa,
+				Namespace: ns,
+			},
+		},
+		RoleRef: rbac.RoleRef{
+			Kind: "ClusterRole",
+			Name: clusterRole,
+		},
+	}
+}
+
+func addSAToRoleBinding(k8sClient *kubernetes.Clientset, rbObj *rbac.RoleBinding, sa, ns string) error {
+	subjects := rbObj.Subjects
+	subjects = append(subjects, rbac.Subject{
+		Kind:      "ServiceAccount",
+		Name:      sa,
+		Namespace: ns,
+	})
+	rbObj.Subjects = subjects
+
+	_, err := k8sClient.RbacV1beta1().RoleBindings(rbObj.Namespace).Update(rbObj)
+	return err
+}
+
+func isSAInRoleBinding(rbObj *rbac.RoleBinding, sa, ns string) bool {
+	for _, subject := range rbObj.Subjects {
+		if subject.Name == sa && subject.Namespace == ns {
+			return true
+		}
+	}
+
+	return false
+}
+
+func SetupRoleBinding(k8sClient *kubernetes.Clientset, sa, ns, roleBinding, clusterRole string, roleBindingNs string) error {
+	// get the role binding object
+	rbObj, err := k8sClient.RbacV1beta1().RoleBindings(roleBindingNs).Get(
+		roleBinding, metav1.GetOptions{})
+
+	if err == nil {
+		// if role binding exists, check if this sa is part of the binding. if not, add it
+		if !isSAInRoleBinding(rbObj, sa, ns) {
+			return addSAToRoleBinding(k8sClient, rbObj, sa, ns)
+		}
+		return nil
+	}
+
+	// if role binding is missing, create it. also add this sa to the binding.
+	if k8serrors.IsNotFound(err) {
+		rbObj = makeRoleBindingObj(ns, sa, roleBinding, roleBindingNs, clusterRole)
+		rbObj, err = k8sClient.RbacV1beta1().RoleBindings(roleBindingNs).Create(rbObj)
+	}
+
+	return err
 }

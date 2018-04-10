@@ -20,12 +20,12 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	//kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/util/intstr"
+	//"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
+	//apiv1 "k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/rest"
 	k8sCache "k8s.io/client-go/tools/cache"
 
@@ -43,11 +43,11 @@ func makeFuncIstioServiceRegister(crdClient *rest.RESTClient,
 	kubernetesClient *kubernetes.Clientset, fnNamespace string) k8sCache.Controller {
 
 	resyncPeriod := 30 * time.Second
-	lw := k8sCache.NewListWatchFromClient(crdClient, "functions", metav1.NamespaceDefault, fields.Everything())
+	lw := k8sCache.NewListWatchFromClient(crdClient, "functions", metav1.NamespaceAll, fields.Everything())
 	_, controller := k8sCache.NewInformer(lw, &crd.Function{}, resyncPeriod,
 		k8sCache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-
+				log.Printf("List watch for function reported a new function addition")
 				fn := obj.(*crd.Function)
 
 				// Since istio only allows accessing pod through k8s service,
@@ -60,6 +60,16 @@ func makeFuncIstioServiceRegister(crdClient *rest.RESTClient,
 					return
 				}
 
+				// create or append rolebinding
+				// SetupRoleBinding(k8sClient *kubernetes.Clientset, sa, ns, roleBinding, clusterRole string, roleBindingNs string)
+				log.Printf("Setting up rolebinding for fetcher SA in func's env ns : %s, in func's ns : %s, for func : %s", fn.Spec.Environment.Namespace, fn.Metadata.Namespace, fn.Metadata.Name)
+				err := fission.SetupRoleBinding(kubernetesClient, fission.FissionFetcherSA, fn.Spec.Environment.Namespace, fission.GetSecretConfigMapRoleBinding,fission.SecretConfigMapGetterCR, fn.Metadata.Namespace)
+				if err != nil {
+					log.Printf("Error : %v creating SecretConfigMapGetterCR clusterRole", err)
+				}
+				log.Printf("Successfully set up rolebinding for fetcher SA in func's env ns : %s, in func's ns : %s, for func : %s", fn.Spec.Environment.Namespace, fn.Metadata.Namespace, fn.Metadata.Name)
+
+				/*
 				// create a same name service for function
 				// since istio only allows the traffic to service
 				sel := map[string]string{
@@ -104,12 +114,15 @@ func makeFuncIstioServiceRegister(crdClient *rest.RESTClient,
 				}
 
 				// create function istio service if it does not exist
-				_, err := kubernetesClient.CoreV1().Services(fnNamespace).Create(&svc)
+				_, err = kubernetesClient.CoreV1().Services(fnNamespace).Create(&svc)
 				if err != nil && !kerrors.IsAlreadyExists(err) {
 					log.Printf("Error creating function istio service: %v", err)
 				}
+				*/
+
 			},
 			DeleteFunc: func(obj interface{}) {
+				/*
 				fn := obj.(*crd.Function)
 				svcName := fission.GetFunctionIstioServiceName(fn.Metadata.Name, fn.Metadata.Namespace)
 				// delete function istio service
@@ -117,6 +130,7 @@ func makeFuncIstioServiceRegister(crdClient *rest.RESTClient,
 				if err != nil && !kerrors.IsNotFound(err) {
 					log.Printf("Error deleting function istio service: %v", err)
 				}
+				*/
 			},
 			UpdateFunc: func(oldObj, newObj interface{}) {},
 		})

@@ -85,6 +85,8 @@ func MakeGenericPoolManager(
 	}
 	go gpm.service()
 	go gpm.eagerPoolCreator()
+	gpm.istioServiceRegister = makeFuncIstioServiceRegister(
+				gpm.fissionClient.GetCrdClient(), gpm.kubernetesClient, functionNamespace)
 
 	if len(os.Getenv("ENABLE_ISTIO")) > 0 {
 		istio, err := strconv.ParseBool(os.Getenv("ENABLE_ISTIO"))
@@ -103,9 +105,9 @@ func MakeGenericPoolManager(
 }
 
 func (gpm *GenericPoolManager) Run(ctx context.Context) {
-	if gpm.enableIstio && gpm.istioServiceRegister != nil {
+	//if gpm.enableIstio && gpm.istioServiceRegister != nil {
 		go gpm.istioServiceRegister.Run(ctx.Done())
-	}
+	//}
 }
 
 func (gpm *GenericPoolManager) service() {

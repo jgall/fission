@@ -153,11 +153,40 @@ func MakeGenericPool(
 	log.Printf("fetcher image: %v, pull policy: %v", gp.fetcherImage, gp.fetcherImagePullPolicy)
 
 	// setup RBAC
-	err := fission.SetupRBAC(gp.kubernetesClient, fission.FissionFetcherSA, gp.namespace,
-		fission.FissionFetcherClusterRoleBinding, fission.ClusterAdminRole)
+	//err := fission.SetupRBAC(gp.kubernetesClient, fission.FissionFetcherSA, gp.namespace,
+	//	fission.FissionFetcherClusterRoleBinding, fission.ClusterAdminRole)
+	//if err != nil {
+	//	return nil, err
+	//}
+
+	// TODO : Cleanup & re-org code after testing
+	// create fetcher SA
+	_, err := fission.SetupSA(gp.kubernetesClient, fission.FissionFetcherSA, gp.namespace)
 	if err != nil {
+		log.Printf("Error : %v creating fetcher SA in ns : %s", err, gp.namespace)
 		return nil, err
 	}
+	// CR for secret and configMap getter
+	err = fission.SetupClusterRole(gp.kubernetesClient, fission.SecretConfigMapGetterCR)
+	if err != nil {
+		log.Printf("Error : %v creating SecretConfigMapGetterCR clusterRole", err)
+		return nil, err
+	}
+	// CR for packageGet across all namespaces and clusterRolebinding with this role for fetcher SA
+	err = fission.SetupClusterRole(gp.kubernetesClient, fission.PackageGetterCR)
+	if err != nil {
+		log.Printf("Error : %v creating fission.PackageGetterCR clusterRole", err)
+		return nil, err
+	}
+	// CRB for packageGetter
+	// SetupClusterRoleBinding(k8sClient *kubernetes.Clientset, sa, ns, clusterRoleBinding, clusterRole string)
+	fission.SetupClusterRoleBinding(gp.kubernetesClient, fission.FissionFetcherSA, gp.namespace, fission.PackageGetterCRB, fission.PackageGetterCR)
+	if err != nil {
+		log.Printf("Error : %v creating fission.PackageGetterCRB clusterRoleBinding", err)
+		return nil, err
+	}
+	log.Printf("Successfully created SecretConfigMapGetterCR, PackageGetter CR and CRB")
+
 
 	// Labels for generic deployment/RS/pods.
 	gp.labelsForPool = map[string]string{
@@ -479,10 +508,12 @@ func (gp *GenericPool) createPool() error {
 
 	// Use long terminationGracePeriodSeconds for connection draining in case that
 	// pod still runs user functions.
-	gracePeriodSeconds := int64(6 * 60)
-	if gp.env.Spec.TerminationGracePeriod > 0 {
-		gracePeriodSeconds = gp.env.Spec.TerminationGracePeriod
-	}
+	//gracePeriodSeconds := int64(6 * 60)
+	//if gp.env.Spec.TerminationGracePeriod > 0 {
+	//	gracePeriodSeconds = gp.env.Spec.TerminationGracePeriod
+	//}
+
+	gracePeriodSeconds := int64(0)
 
 	podAnnotation := make(map[string]string)
 
